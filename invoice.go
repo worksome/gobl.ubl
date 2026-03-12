@@ -150,6 +150,12 @@ func ublInvoice(inv *bill.Invoice, o *options) (*Invoice, error) {
 		}
 	}
 
+	if inv.Meta != nil {
+		if v, ok := inv.Meta[cbc.Key("copy")]; ok && v == "true" {
+			out.CopyIndicator = true
+		}
+	}
+
 	if inv.Type.In(bill.InvoiceTypeCreditNote) {
 		out.XMLName = xml.Name{Local: "CreditNote"}
 		out.UBLNamespace = NamespaceUBLCreditNote
