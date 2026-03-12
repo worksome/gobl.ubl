@@ -7,6 +7,7 @@ import (
 	"github.com/invopop/gobl/currency"
 	"github.com/invopop/gobl/org"
 	"github.com/invopop/gobl/tax"
+	"github.com/invopop/gobl/uuid"
 )
 
 var invoiceTypeMap = map[string]cbc.Key{
@@ -84,6 +85,20 @@ func (ui *Invoice) goblInvoice(o *options) (*bill.Invoice, error) {
 		return nil, err
 	}
 	out.IssueDate = issueDate
+
+	if ui.UUID != "" {
+		id, err := uuid.Parse(ui.UUID)
+		if err == nil {
+			out.UUID = id
+		}
+	}
+
+	if ui.CopyIndicator {
+		if out.Meta == nil {
+			out.Meta = make(cbc.Meta)
+		}
+		out.Meta[cbc.Key("copy")] = "true"
+	}
 
 	if err := ui.goblAddLines(out); err != nil {
 		return nil, err

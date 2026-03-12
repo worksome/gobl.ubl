@@ -3,6 +3,7 @@ package ubl_test
 import (
 	"testing"
 
+	ubl "github.com/invopop/gobl.ubl"
 	"github.com/invopop/gobl/bill"
 	"github.com/invopop/gobl/cbc"
 	"github.com/invopop/gobl/tax"
@@ -186,4 +187,162 @@ func TestParseInvoiceTypeAndTagCombinations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseUUID(t *testing.T) {
+	t.Run("parses UUID from OIOUBL XML", func(t *testing.T) {
+		xmlInput := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2">
+  <cbc:CustomizationID>urn:fdc:oioubl.dk:trns:billing:invoice:3.0</cbc:CustomizationID>
+  <cbc:ProfileID>urn:fdc:oioubl.dk:bis:billing_with_response:3</cbc:ProfileID>
+  <cbc:ID>TEST-UUID-001</cbc:ID>
+  <cbc:UUID>019cde16-3215-75a1-84f9-4d410281281f</cbc:UUID>
+  <cbc:IssueDate>2026-01-01</cbc:IssueDate>
+  <cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>DKK</cbc:DocumentCurrencyCode>
+  <cac:AccountingSupplierParty>
+    <cac:Party>
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>Test Supplier</cbc:RegistrationName>
+      </cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty>
+    <cac:Party>
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>Test Customer</cbc:RegistrationName>
+      </cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingCustomerParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:PayableAmount currencyID="DKK">100.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`)
+
+		parsed, err := ubl.Parse(xmlInput)
+		require.NoError(t, err)
+
+		inv, ok := parsed.(*ubl.Invoice)
+		require.True(t, ok)
+		assert.Equal(t, "019cde16-3215-75a1-84f9-4d410281281f", inv.UUID)
+
+		env, err := inv.Convert()
+		require.NoError(t, err)
+
+		goblInv, ok := env.Extract().(*bill.Invoice)
+		require.True(t, ok)
+		assert.Equal(t, "019cde16-3215-75a1-84f9-4d410281281f", goblInv.UUID.String(),
+			"UUID from UBL XML should be preserved in GOBL invoice")
+	})
+
+	t.Run("round-trips UUID through OIOUBL30", func(t *testing.T) {
+		doc, err := testInvoiceFrom("oioubl30-invoice-example.json")
+		require.NoError(t, err)
+		require.NotEmpty(t, doc.UUID)
+
+		data, err := ubl.Bytes(doc)
+		require.NoError(t, err)
+
+		parsed, err := ubl.Parse(data)
+		require.NoError(t, err)
+
+		inv, ok := parsed.(*ubl.Invoice)
+		require.True(t, ok)
+		assert.Equal(t, doc.UUID, inv.UUID, "UUID should survive XML round-trip")
+
+		env, err := inv.Convert()
+		require.NoError(t, err)
+
+		goblInv, ok := env.Extract().(*bill.Invoice)
+		require.True(t, ok)
+		assert.Equal(t, doc.UUID, goblInv.UUID.String(),
+			"UUID should survive full round-trip through GOBL")
+	})
+}
+
+func TestParseCopyIndicator(t *testing.T) {
+	t.Run("true CopyIndicator is stored in meta", func(t *testing.T) {
+		xmlInput := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2">
+  <cbc:ID>TEST-COPY</cbc:ID>
+  <cbc:CopyIndicator>true</cbc:CopyIndicator>
+  <cbc:IssueDate>2026-01-01</cbc:IssueDate>
+  <cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>DKK</cbc:DocumentCurrencyCode>
+  <cac:AccountingSupplierParty>
+    <cac:Party>
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>Test</cbc:RegistrationName>
+      </cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty>
+    <cac:Party>
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>Test</cbc:RegistrationName>
+      </cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingCustomerParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:PayableAmount currencyID="DKK">100.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`)
+
+		parsed, err := ubl.Parse(xmlInput)
+		require.NoError(t, err)
+
+		inv, ok := parsed.(*ubl.Invoice)
+		require.True(t, ok)
+		assert.True(t, inv.CopyIndicator)
+
+		env, err := inv.Convert()
+		require.NoError(t, err)
+
+		goblInv, ok := env.Extract().(*bill.Invoice)
+		require.True(t, ok)
+		assert.Equal(t, "true", goblInv.Meta["copy"],
+			"CopyIndicator should be preserved as meta key 'copy'")
+	})
+
+	t.Run("false CopyIndicator does not set meta", func(t *testing.T) {
+		xmlInput := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<Invoice xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2">
+  <cbc:ID>TEST-NO-COPY</cbc:ID>
+  <cbc:CopyIndicator>false</cbc:CopyIndicator>
+  <cbc:IssueDate>2026-01-01</cbc:IssueDate>
+  <cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>DKK</cbc:DocumentCurrencyCode>
+  <cac:AccountingSupplierParty>
+    <cac:Party>
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>Test</cbc:RegistrationName>
+      </cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingSupplierParty>
+  <cac:AccountingCustomerParty>
+    <cac:Party>
+      <cac:PartyLegalEntity>
+        <cbc:RegistrationName>Test</cbc:RegistrationName>
+      </cac:PartyLegalEntity>
+    </cac:Party>
+  </cac:AccountingCustomerParty>
+  <cac:LegalMonetaryTotal>
+    <cbc:PayableAmount currencyID="DKK">100.00</cbc:PayableAmount>
+  </cac:LegalMonetaryTotal>
+</Invoice>`)
+
+		parsed, err := ubl.Parse(xmlInput)
+		require.NoError(t, err)
+
+		inv, ok := parsed.(*ubl.Invoice)
+		require.True(t, ok)
+
+		env, err := inv.Convert()
+		require.NoError(t, err)
+
+		goblInv, ok := env.Extract().(*bill.Invoice)
+		require.True(t, ok)
+		_, hasCopy := goblInv.Meta["copy"]
+		assert.False(t, hasCopy, "false CopyIndicator should not create meta entry")
+	})
 }
